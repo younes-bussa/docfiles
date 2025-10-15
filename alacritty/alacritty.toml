@@ -24,10 +24,9 @@ cyan    = "#5fffff"
 white   = "#ffffff"
 
 [font]
-size = 9.8
-
+size = 9.5
 [window]
-opacity = 1.0
+opacity = 0.75
 
 [font.bold]
 family = "JetBrainsMono Nerd Font"
@@ -38,8 +37,8 @@ family = "JetBrainsMono Nerd Font"
 style = "Italic"
 
 [window.padding]
-x = 8
-y = 8
+x = 0 
+y = 0 
 
 [scrolling]
 history = 10000
