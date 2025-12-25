@@ -1,140 +1,108 @@
-;;; init.el --- Clean, fast, modern config  -*- lexical-binding: t; -*-
-;; -------------------------------------------------------------------
-;; Startup performance
-;; -------------------------------------------------------------------
+;; -*- lexical-binding: t; -*-
 
-;; instead of C-x-o, SHIFT+arrows
-(windmove-default-keybindings)
-
-;; remove the first page
-(setq inhibit-startup-screen t)
-
-;; number in column
-(global-display-line-numbers-mode 1)
-(column-number-mode 1)
-
-;; yes->y no->n (replace)
-(fset 'yes-or-no-p 'y-or-n-p)
-
-;; automatic load file after changing (by git,..)
-(global-auto-revert-mode 1)
-
-;;Show Matching Parentheses
-(show-paren-mode 1)
-
-;; improve C-s to search
-(use-package swiper
-  :bind (("C-s" . swiper)))
-
-;;Highlight Matching Brackets
-(setq show-paren-delay 0)
-(set-face-attribute 'show-paren-match nil :background "#44475a" :weight 'bold)
-
-;; Save Your Place in Files (close emacs in line 34 when i return i return on 34)
-(save-place-mode 1)
-
-;; remove unnacessary buffer like message,..
-(defun kill-unwanted-buffers ()
-  "Kill annoying built-in buffers not created by user."
-  (interactive)
-  (dolist (buf '("*Messages*" "*scratch*" "*Completions*" "*Warnings*" "*Help*"))
-    (when (get-buffer buf)
-      (kill-buffer buf))))
-
-;; Run once on startup
-(add-hook 'emacs-startup-hook #'kill-unwanted-buffers)
-
-(setq gc-cons-threshold most-positive-fixnum
-      gc-cons-percentage 0.6)
-(add-hook 'emacs-startup-hook
-          (lambda ()
-            (setq gc-cons-threshold (* 128 1024 1024)
-                  gc-cons-percentage 0.1)))
-
-(let ((old-file-name-handler-alist file-name-handler-alist))
-  (setq file-name-handler-alist nil)
-  (add-hook 'emacs-startup-hook
-            (lambda () (setq file-name-handler-alist old-file-name-handler-alist))))
-
-(when (boundp 'native-comp-async-report-warnings-errors)
-  (setq native-comp-async-report-warnings-errors nil))
-
-(setq inhibit-startup-message t
+;;; =========================== Quiet, fast startup ===========================
+(setq inhibit-startup-screen t
       ring-bell-function 'ignore
       use-dialog-box nil
       frame-resize-pixelwise t)
 
-;; -------------------------------------------------------------------
-;; Theme & font (keeps your choices)
-;; -------------------------------------------------------------------
-(load-theme 'tango-dark t)
-(when (member "JetBrains Mono" (font-family-list))
-  (set-face-attribute 'default nil :font "JetBrains Mono-11"))
+;; GC + file-name-handler boost (robust: no void variables later)
+(defvar my/old-gc-cons-threshold gc-cons-threshold)
+(defvar my/old-file-name-handler-alist file-name-handler-alist)
+(setq gc-cons-threshold (* 256 1024 1024)
+      gc-cons-percentage 0.6
+      file-name-handler-alist nil)
+(add-hook 'after-init-hook
+          (lambda ()
+            (setq gc-cons-threshold (* 64 1024 1024)
+                  gc-cons-percentage 0.1
+                  file-name-handler-alist my/old-file-name-handler-alist))
+          100)
 
-;; -------------------------------------------------------------------
-;; Package Management (use MELPA/GNU/NonGNU + bootstrap use-package)
-;; -------------------------------------------------------------------
+;; Idle GC: run periodically when Emacs is idle (smoother than a one-shot)
+(when (fboundp 'garbage-collect)
+  (ignore-errors (cancel-function-timers #'garbage-collect))
+  (run-with-idle-timer 5 t #'garbage-collect))
+
+;; Silence native-comp warnings (Emacs 28+)
+(when (boundp 'native-comp-async-report-warnings-errors)
+  (setq native-comp-async-report-warnings-errors nil))
+
+;;; ============================== Packages ===================================
+(setq package-enable-at-startup nil)
 (require 'package)
 (setq package-archives
-      '(("gnu"    . "https://elpa.gnu.org/packages/")
-        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-        ("melpa"  . "https://melpa.org/packages/")))
-(unless (bound-and-true-p package--initialized)
-  (package-initialize))
-(unless package-archive-contents
-  (package-refresh-contents))
-(unless (package-installed-p 'use-package)
-  (package-install 'use-package))
+      '(("gnu"          . "https://elpa.gnu.org/packages/")
+        ("nongnu"       . "https://elpa.nongnu.org/nongnu/")
+        ("melpa-stable" . "https://stable.melpa.org/packages/")))
+(setq package-archive-priorities '(("gnu" . 100) ("nongnu" . 80) ("melpa-stable" . 60)))
+(unless (bound-and-true-p package--initialized) (package-initialize))
+(unless package-archive-contents (package-refresh-contents))
+
+;; Ensure core packages are present
+(dolist (pkg '(use-package flycheck no-littering vertico marginalia consult corfu cape
+                rainbow-delimiters orderless))
+  (unless (package-installed-p pkg) (package-install pkg)))
+
 (eval-when-compile (require 'use-package))
 (setq use-package-always-ensure t
       use-package-expand-minimally t)
 
-;; Proactively install core packages; ignore failures (e.g., offline); we fall back gracefully if missing.
-(let ((core-pkgs '(orderless vertico marginalia consult corfu cape no-littering
-                             flycheck flycheck-eglot eglot format-all
-                             yaml-mode json-mode toml-mode magit doom-modeline which-key)))
-  (unless package-archive-contents (ignore-errors (package-refresh-contents)))
-  (dolist (p core-pkgs)
-    (unless (package-installed-p p)
-      (ignore-errors (package-install p)))))
+;; themes for GUI
+(when (display-graphic-p)
+  (load-theme 'tango-dark t))
 
-;; -------------------------------------------------------------------
-;; UI / Usability
-;; -------------------------------------------------------------------
-(use-package doom-modeline
-  :hook (after-init . doom-modeline-mode)
-  :custom (doom-modeline-height 15))
+;; auto parenthese
+(setq show-paren-delay 0)
+(show-paren-mode 1)
+(electric-pair-mode 1)         ;; auto-close (), {}, [], "", ''
 
-(use-package which-key
-  :hook (after-init . which-key-mode)
-  :custom (which-key-idle-delay 0.5))
+;; Defer packages by default
+(setq use-package-always-defer t)
 
-
+;; remember line
+(setq save-place-file (locate-user-emacs-file "places"))
 (save-place-mode 1)
-(recentf-mode 1)
-(savehist-mode 1)
-(global-auto-revert-mode 1)
-(setq auto-revert-verbose nil)
-(electric-pair-mode 1)
 
-;; Better defaults
-(setq-default indent-tabs-mode nil
-              tab-width 4
-              fill-column 100)
-(setq sentence-end-double-space nil)
+;; jump symbol function,..
+(global-set-key (kbd "M-i") #'consult-imenu)
 
-;; Keep user config separate
-(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
-(when (file-exists-p custom-file)
-  (load custom-file 'noerror))
+;; clean interface
+(menu-bar-mode -1)
+(tool-bar-mode -1)
+(scroll-bar-mode -1)
+(setq inhibit-startup-message t)
 
-;; Enable standard keybindings (C-c/C-v etc.)
+;; packages handling manually by
+;; M-x package-refresh-contents
+;; (unless package-archive-contents
+;;   (package-refresh-contents))
+;; (unless (package-installed-p 'use-package)
+;;   (package-install 'use-package))
+;; (require 'use-package)
+;; (setq use-package-always-ensure t)
+
+;; line number
+(add-hook 'prog-mode-hook #'display-line-numbers-mode)
+
+;; M-←/→/↑/↓ move between windows
+(windmove-default-keybindings 'meta) 
+(setq windmove-wrap-around t)
+;; Enables CUA mode C-c copy,...
 (cua-mode 1)
 (setq cua-keep-region-after-copy t)
+(column-number-mode 1)
+(defalias 'yes-or-no-p 'y-or-n-p)
 
-;; -------------------------------------------------------------------
-;; Tidy filesystem: put backups/autosaves under ~/.emacs.d/var
-;; -------------------------------------------------------------------
+;; Stops Emacs from spamming messages when buffers auto-refresh. Keeps the echo area clean.
+(setq auto-revert-verbose nil)
+(global-auto-revert-mode 1)
+
+;; tab 4 space 
+(setq-default indent-tabs-mode nil
+              tab-width 4)
+
+;; Filesystem hygiene
 (use-package no-littering
   :init
   (setq no-littering-etc-directory (expand-file-name "etc/" user-emacs-directory)
@@ -150,89 +118,90 @@
         kept-old-versions 2
         version-control t))
 
-;; -------------------------------------------------------------------
-;; Completion & search (robust bootstrapping + graceful fallback)
-;; -------------------------------------------------------------------
-(condition-case err
-    (progn
-      (use-package vertico :init (vertico-mode 1))
-      (use-package orderless :defer t)
-      (use-package marginalia :init (marginalia-mode 1))
-      (use-package consult
-        :bind (("C-s"   . consult-line)
-               ("C-x b" . consult-buffer)
-               ("M-g g" . consult-goto-line)
-               ("C-c r" . consult-ripgrep)))
-      (use-package corfu
-        :init (global-corfu-mode)
-        :custom (corfu-auto t))
-      (use-package cape
-        :init (add-to-list 'completion-at-point-functions #'cape-file))
-      ;; If orderless is present, enable it; else fall back to basic completion.
-      (if (require 'orderless nil 'noerror)
-          (progn
-            (setq completion-styles '(orderless basic)
-                  completion-category-defaults nil
-                  completion-category-overrides '((file (styles basic partial-completion)))))
-        (message "orderless not available; falling back to basic completion.")
-        (setq completion-styles '(basic partial-completion)
-              completion-category-defaults nil
-              completion-category-overrides '((file (styles basic partial-completion))))))
-  (error
-   (message "Completion stack setup failed: %s. Using defaults." err)))
-
-;; -------------------------------------------------------------------
-;; Editing & Formatting
-;; -------------------------------------------------------------------
-(use-package format-all
-  :hook ((prog-mode . format-all-mode)
-         (format-all-mode . format-all-ensure-formatter))
-  :bind (("C-c f" . format-all-buffer)))
-
-;; Don't shadow the default undo on C-/
-(global-set-key (kbd "C-c /") #'comment-line)
-
-;; -------------------------------------------------------------------
-;; Syntax Checking + LSP integration
-;; -------------------------------------------------------------------
-(use-package flycheck
-  :hook (prog-mode . flycheck-mode)
-  :custom (flycheck-display-errors-delay 0.25))
-
-;; Prefer Eglot (built-in in Emacs 29) for LSP diagnostics, bridged into Flycheck UI
-(use-package eglot
-  :hook ((go-mode
-          python-mode
-          js-mode
-          typescript-ts-mode
-          json-mode
-          yaml-mode
-          rust-mode
-          c-mode c++-mode
-          java-mode) . eglot-ensure)
+;; vertico
+(use-package vertico
+  :init
+  (vertico-mode 1)
   :config
-  ;; Java via jdtls if available
-  (when (executable-find "jdtls")
-    (add-to-list 'eglot-server-programs '(java-mode . ("jdtls")))))
+  (setq vertico-cycle t)) ;; wrap at list end
 
-(use-package flycheck-eglot
-  :after (flycheck eglot)
-  :config (global-flycheck-eglot-mode 1))
+(use-package marginalia :init (marginalia-mode 1))
 
-;; -------------------------------------------------------------------
-;; Languages & tools
-;; -------------------------------------------------------------------
-(use-package markdown-mode :mode ("\\.md\\'" "\\.markdown\\'")
-  :custom (markdown-command "pandoc"))
-(use-package yaml-mode :mode "\\.ya?ml\\'")
-(use-package json-mode :mode "\\.json\\'")
-(use-package toml-mode :mode "\\.toml\\'")
-(use-package magit :commands (magit-status))
+(use-package consult
+  :bind (
+         ("C-s" . consult-line)
+         ("C-x b" . consult-buffer)
+         ("M-g g" . consult-goto-line)
+         ("C-c r" . consult-ripgrep))
+  ) ; requires ripgrep installed
 
-;; Simple project keybindings (built-in project.el)
-(use-package project :ensure nil)
-(global-set-key (kbd "C-c p f") #'project-find-file)
-(global-set-key (kbd "C-c p s") #'project-switch-project)
+(use-package savehist
+  :init (savehist-mode 1))
 
-;;; init.el ends here
+;; Prefer orderless; fall back cleanly for files
+(use-package orderless
+  :init
+  (setq completion-styles '(orderless basic)
+        completion-category-defaults nil
+        completion-category-overrides
+        '((file (styles basic partial-completion)))))
 
+(use-package corfu
+  :init
+  (global-corfu-mode)
+  :custom
+  (corfu-auto t)
+  (corfu-auto-delay 0.20)
+  (corfu-auto-prefix 2)
+  (corfu-quit-no-match 'separator)
+  (corfu-preselect 'prompt))
+
+;; maximum syntax highlighting
+(setq font-lock-maximum-decoration t)
+
+;; rainbow-delimiters
+(use-package rainbow-delimiters
+  :hook (prog-mode . rainbow-delimiters-mode))
+
+;; Project management
+(with-eval-after-load 'project
+  (define-key project-prefix-map (kbd "f") #'project-find-file)
+  (define-key project-prefix-map (kbd "g") #'project-find-regexp)
+  (define-key project-prefix-map (kbd "b") #'project-switch-to-buffer))
+
+;; LSP (Eglot) + diagnostics (Flycheck or Flymake)
+(use-package eglot
+  :hook ((c-mode c++-mode python-mode js-mode) . eglot-ensure))
+
+;; which-key
+(use-package which-key
+  :init (which-key-mode 1))
+
+(custom-set-variables
+ ;; custom-set-variables was added by Custom.
+ ;; If you edit it by hand, you could mess it up, so be careful.
+ ;; Your init file should contain only one such instance.
+ ;; If there is more than one, they won't work right.
+ '(package-selected-packages
+   '(avy breadcrumb cape consult corfu doom-modeline
+         eglot-inactive-regions exec-path-from-shell expand-region
+         flycheck-eglot format-all gnu-elpa-keyring-update json-mode
+         magit marginalia markdown-preview-mode mixed-pitch
+         modus-themes no-littering orderless php-mode python-black
+         rainbow-delimiters swiper symbol-overlay toml-mode undo-tree
+         vertico yaml-mode yasnippet)))
+(custom-set-faces
+ ;; custom-set-faces was added by Custom.
+ ;; If you edit it by hand, you could mess it up, so be careful.
+ ;; Your init file should contain only one such instance.
+ ;; If there is more than one, they won't work right.
+ )
+
+;;; =============================== GC guards =================================
+;; Raise GC threshold while minibuffer is active (completions, searches)
+(defun my/minibuffer-setup-gc ()
+  (setq gc-cons-threshold (* 512 1024 1024)))
+(defun my/minibuffer-exit-gc ()
+  (setq gc-cons-threshold (* 64 1024 1024)))
+(add-hook 'minibuffer-setup-hook #'my/minibuffer-setup-gc)
+(add-hook 'minibuffer-exit-hook  #'my/minibuffer-exit-gc)
